@@ -35,9 +35,10 @@ module soap_turbo_desc
 
 !**************************************************************************
   subroutine get_soap(n_sites, n_neigh, n_species, species, species_multiplicity, n_atom_pairs, mask, rjs, &
-                      thetas, phis, alpha_max, l_max, rcut_hard, rcut_soft, nf, global_scaling, atom_sigma_r, &
-                      atom_sigma_r_scaling, atom_sigma_t, atom_sigma_t_scaling, &
-                      amplitude_scaling, radial_enhancement, central_weight, basis, scaling_mode, do_timing, &
+                      thetas, phis, alpha_max_d, alpha_max, l_max, rcut_hard_d, rcut_hard, rcut_soft_d, nf_d, global_scaling_d, &
+                      atom_sigma_r_d, atom_sigma_r, &
+                      atom_sigma_r_scaling_d, atom_sigma_t_d, atom_sigma_t_scaling_d, &
+                      amplitude_scaling_d, radial_enhancement, central_weight_d, central_weight, basis, scaling_mode, do_timing, &
                       do_derivatives, compress_soap, compress_soap_indices, soap, soap_cart_der, time_get_soap, &
                       soap_d,  soap_cart_der_d, n_neigh_d, k2_i_site_d, gpu_stream)
 
@@ -46,9 +47,12 @@ module soap_turbo_desc
 !-------------------
 ! Input variables
   real(c_double), intent(in), target :: rjs(:), thetas(:), phis(:)
-  real(c_double), intent(in), target :: amplitude_scaling(:), atom_sigma_r_scaling(:), atom_sigma_t(:), atom_sigma_t_scaling(:)
-  real(c_double), intent(in), target :: central_weight(:), atom_sigma_r(:), global_scaling(:)
-  real(c_double), intent(in), target :: nf(:), rcut_hard(:), rcut_soft(:)
+! real(c_double), intent(in), target :: amplitude_scaling(:), atom_sigma_r_scaling(:), atom_sigma_t(:), atom_sigma_t_scaling(:)
+! real(c_double), intent(in), target :: amplitude_scaling(:), atom_sigma_t(:), atom_sigma_t_scaling(:)
+! real(c_double), intent(in), target :: central_weight(:), atom_sigma_r(:), global_scaling(:)
+  real(c_double), intent(in), target :: central_weight(:), atom_sigma_r(:)
+! real(c_double), intent(in), target :: nf(:), rcut_hard(:), rcut_soft(:)
+  real(c_double), intent(in), target :: rcut_hard(:)
 
   integer(c_int), intent(in), target :: n_species, radial_enhancement, species(:,:), species_multiplicity(:)
   integer, intent(in) :: n_sites,l_max, n_atom_pairs, alpha_max(:), compress_soap_indices(:)
@@ -109,7 +113,9 @@ module soap_turbo_desc
   type(c_ptr) :: radial_exp_coeff_temp1_d, radial_exp_coeff_temp2_d, radial_exp_coeff_der_temp_d
   type(c_ptr) :: angular_exp_coeff_rad_der_d, angular_exp_coeff_azi_der_d
   type(c_ptr) :: angular_exp_coeff_pol_der_d
-  type(c_ptr), intent(inout) :: soap_cart_der_d, soap_d
+  type(c_ptr), intent(inout) :: soap_cart_der_d, soap_d, nf_d, rcut_hard_d, rcut_soft_d, global_scaling_d
+  type(c_ptr), intent(inout) :: atom_sigma_r_d, atom_sigma_r_scaling_d,atom_sigma_t_d,atom_sigma_t_scaling_d
+  type(c_ptr), intent(inout) :: amplitude_scaling_d, alpha_max_d, central_weight_d
   type(c_ptr) :: k2_start_d
   integer(c_size_t) :: st_soap, st_soap_cart_der, st_soap_rap_der
   integer(c_size_t) :: st_n_atom_pairs_int, st_n_sites_int, st_skip_component
@@ -121,12 +127,16 @@ module soap_turbo_desc
   integer(c_size_t) :: st_size_species_multiplicity,st_size_central_weight, st_size_preflm,st_do_central_d
   
   integer(c_int) :: bintybint, size_central_weight
-  type(c_ptr) :: W_d, S_d, species_multiplicity_d, species_d, rcut_hard_d, rcut_soft_d, atom_sigma_r_scaling_d
-  type(c_ptr) :: central_weight_d, atom_sigma_r_d, atom_sigma_t_d, atom_sigma_t_scaling_d, mask_d, do_central_d
+! type(c_ptr) :: W_d, S_d, species_multiplicity_d, species_d, rcut_hard_d, rcut_soft_d, atom_sigma_r_scaling_d
+  type(c_ptr) :: W_d, S_d, species_multiplicity_d, species_d
+! type(c_ptr) :: central_weight_d, atom_sigma_r_d, atom_sigma_t_d, atom_sigma_t_scaling_d, mask_d, do_central_d
+  type(c_ptr) :: mask_d, do_central_d
   integer(c_int) :: size_1_species, size_2_species, size_species_multiplicity, size_i_beg, size_i_end
   integer(c_int) :: size_rcut_hard, size_atom_sigma_t, size_atom_sigma_r, size_2_W, size_2_S,size_1_W, size_1_S
   integer(c_int) :: size_atom_sigma_t_scaling, size_global_scaling, size_alphamax
-  type(c_ptr) :: global_scaling_d, amplitude_scaling_d, alpha_max_d, nf_d
+! type(c_ptr) :: global_scaling_d, amplitude_scaling_d, alpha_max_d, nf_d
+! type(c_ptr) :: amplitude_scaling_d, alpha_max_d
+! type(c_ptr) :: alpha_max_d
   logical(c_bool) :: c_do_derivatives
   integer :: kij, ntemp, ntemp_der, mode
   integer(c_size_t) :: ntemp_d, ntemp_der_d
@@ -403,33 +413,28 @@ module soap_turbo_desc
   call gpu_malloc_all(do_central_d, st_do_central_d, gpu_stream)
   call cpy_htod(c_loc(do_central), do_central_d, st_do_central_d, gpu_stream)
 
-  call gpu_malloc_all(rjs_d,st_n_atom_pairs_double, gpu_stream)
-  call cpy_htod(c_loc(rjs),rjs_d, st_n_atom_pairs_double,gpu_stream)
-
   size_rcut_hard=size(rcut_hard,1)
   st_size_rcut_hard=size_rcut_hard*sizeof(rcut_hard(1))
-  call gpu_malloc_all(rcut_hard_d,st_size_rcut_hard, gpu_stream)
-  call cpy_htod(c_loc(rcut_hard),rcut_hard_d,st_size_rcut_hard, gpu_stream)
-  call gpu_malloc_all(rcut_soft_d,st_size_rcut_hard, gpu_stream)
-  call cpy_htod(c_loc(rcut_soft),rcut_soft_d,st_size_rcut_hard, gpu_stream)
-  call gpu_malloc_all(nf_d,st_size_rcut_hard, gpu_stream)
-  call cpy_htod(c_loc(nf),nf_d,st_size_rcut_hard, gpu_stream)
+! call gpu_malloc_all(rcut_hard_d,st_size_rcut_hard, gpu_stream)
+! call cpy_htod(c_loc(rcut_hard),rcut_hard_d,st_size_rcut_hard, gpu_stream)
+! call gpu_malloc_all(rcut_soft_d,st_size_rcut_hard, gpu_stream)
+! call cpy_htod(c_loc(rcut_soft),rcut_soft_d,st_size_rcut_hard, gpu_stream)
+! size_rcut_hard=size(rcut_hard,1)
+! call gpu_malloc_all(nf_d,st_size_rcut_hard, gpu_stream)
+! call cpy_htod(c_loc(nf),nf_d,st_size_rcut_hard, gpu_stream)
 
   size_atom_sigma_r=size(atom_sigma_r,1)
   st_size_atom_sigma_r=size_atom_sigma_r*sizeof(atom_sigma_r(1))
-  call gpu_malloc_all(atom_sigma_r_d,st_size_atom_sigma_r, gpu_stream)
-  call cpy_htod(c_loc(atom_sigma_r),atom_sigma_r_d,st_size_atom_sigma_r, gpu_stream)
-  call gpu_malloc_all(atom_sigma_r_scaling_d,st_size_atom_sigma_r, gpu_stream)
-  call cpy_htod(c_loc(atom_sigma_r_scaling),atom_sigma_r_scaling_d,st_size_atom_sigma_r, gpu_stream)
-  call gpu_malloc_all(amplitude_scaling_d,st_size_atom_sigma_r, gpu_stream)
-  call cpy_htod(c_loc(amplitude_scaling),amplitude_scaling_d,st_size_atom_sigma_r, gpu_stream)
-  size_alphamax=size(alpha_max,1)
-  st_size_alphamax=size_alphamax*sizeof(alpha_max(1))
-  call gpu_malloc_all(alpha_max_d,st_size_alphamax, gpu_stream)
-  call cpy_htod(c_loc(alpha_max),alpha_max_d,st_size_alphamax, gpu_stream)
-
-  call gpu_malloc_all(n_neigh_d,st_n_sites_int,gpu_stream)
-  call cpy_htod(c_loc(n_neigh),n_neigh_d, st_n_sites_int,gpu_stream)
+! call gpu_malloc_all(atom_sigma_r_d,st_size_atom_sigma_r, gpu_stream)
+! call cpy_htod(c_loc(atom_sigma_r),atom_sigma_r_d,st_size_atom_sigma_r, gpu_stream)
+! call gpu_malloc_all(atom_sigma_r_scaling_d,st_size_atom_sigma_r, gpu_stream)
+! call cpy_htod(c_loc(atom_sigma_r_scaling),atom_sigma_r_scaling_d,st_size_atom_sigma_r, gpu_stream)
+! call gpu_malloc_all(amplitude_scaling_d,st_size_atom_sigma_r, gpu_stream)
+! call cpy_htod(c_loc(amplitude_scaling),amplitude_scaling_d,st_size_atom_sigma_r, gpu_stream)
+! size_alphamax=size(alpha_max,1)
+! st_size_alphamax=size_alphamax*sizeof(alpha_max(1))
+! call gpu_malloc_all(alpha_max_d,st_size_alphamax, gpu_stream)
+! call cpy_htod(c_loc(alpha_max),alpha_max_d,st_size_alphamax, gpu_stream)
 
   ntemp = maxval(alpha_max)
   ntemp_der = ntemp
@@ -461,10 +466,16 @@ module soap_turbo_desc
   call gpu_malloc_all(W_d,st_size_W, gpu_stream)
   call cpy_htod(c_loc(W),W_d,st_size_W, gpu_stream)
 
-  size_central_weight=size(central_weight,1)
-  st_size_central_weight= size_central_weight*sizeof(central_weight(1))
-  call gpu_malloc_all(central_weight_d,st_size_central_weight,gpu_stream)
-  call cpy_htod(c_loc(central_weight),central_weight_d,st_size_central_weight, gpu_stream)
+! size_central_weight=size(central_weight,1)
+! st_size_central_weight= size_central_weight*sizeof(central_weight(1))
+! call gpu_malloc_all(central_weight_d,st_size_central_weight,gpu_stream)
+! call cpy_htod(c_loc(central_weight),central_weight_d,st_size_central_weight, gpu_stream)
+
+  call gpu_malloc_all(rjs_d,st_n_atom_pairs_double, gpu_stream)
+  call cpy_htod(c_loc(rjs),rjs_d, st_n_atom_pairs_double,gpu_stream)
+
+  call gpu_malloc_all(n_neigh_d,st_n_sites_int,gpu_stream)
+  call cpy_htod(c_loc(n_neigh),n_neigh_d, st_n_sites_int,gpu_stream)
 
   mode = 0
   if( scaling_mode == "polynomial" ) mode =1
@@ -558,10 +569,10 @@ module soap_turbo_desc
 ! call cpy_htod(c_loc(i_end),i_end_d,st_size_i_end, gpu_stream)
 ! call cpy_htod(c_loc(i_end),i_end_d,st_size_i_end, gpu_stream)
   
-  size_global_scaling=size(global_scaling,1)
-  st_size_global_scaling=size_global_scaling*sizeof(global_scaling(1))
-  call gpu_malloc_all(global_scaling_d, st_size_global_scaling, gpu_stream)
-  call cpy_htod(c_loc(global_scaling), global_scaling_d, st_size_global_scaling, gpu_stream)
+! size_global_scaling=size(global_scaling,1)
+! st_size_global_scaling=size_global_scaling*sizeof(global_scaling(1))
+! call gpu_malloc_all(global_scaling_d, st_size_global_scaling, gpu_stream)
+! call cpy_htod(c_loc(global_scaling), global_scaling_d, st_size_global_scaling, gpu_stream)
 
   
 ! allocate(new_mask(1:n_atom_pairs,1:n_species))
@@ -619,17 +630,16 @@ module soap_turbo_desc
   call gpu_malloc_all(angular_exp_coeff_azi_der_d,st_ang_exp_coeff_rad_der,gpu_stream)
   call gpu_malloc_all(angular_exp_coeff_pol_der_d,st_ang_exp_coeff_rad_der,gpu_stream)
   
-  size_atom_sigma_t=size(atom_sigma_t,1)
-  st_size_atom_sigma_t=size_atom_sigma_t*sizeof(atom_sigma_t(1))
-  call gpu_malloc_all(atom_sigma_t_d,st_size_atom_sigma_t,gpu_stream)
-  call cpy_htod(c_loc(atom_sigma_t),atom_sigma_t_d,st_size_atom_sigma_t, gpu_stream)
+! size_atom_sigma_t=size(atom_sigma_t,1)
+! st_size_atom_sigma_t=size_atom_sigma_t*sizeof(atom_sigma_t(1))
+! call gpu_malloc_all(atom_sigma_t_d,st_size_atom_sigma_t,gpu_stream)
+! call cpy_htod(c_loc(atom_sigma_t),atom_sigma_t_d,st_size_atom_sigma_t, gpu_stream)
   
-  size_atom_sigma_t_scaling=size(atom_sigma_t_scaling,1)
-  st_size_atom_sigma_t_scaling=size_atom_sigma_t_scaling*sizeof(atom_sigma_t_scaling(1))
-  call gpu_malloc_all(atom_sigma_t_scaling_d,st_size_atom_sigma_t_scaling,gpu_stream)
-  call cpy_htod(c_loc(atom_sigma_t_scaling),atom_sigma_t_scaling_d, & 
-                                               st_size_atom_sigma_t, gpu_stream)
-
+! size_atom_sigma_t_scaling=size(atom_sigma_t_scaling,1)
+! st_size_atom_sigma_t_scaling=size_atom_sigma_t_scaling*sizeof(atom_sigma_t_scaling(1))
+! call gpu_malloc_all(atom_sigma_t_scaling_d,st_size_atom_sigma_t_scaling,gpu_stream)
+! call cpy_htod(c_loc(atom_sigma_t_scaling),atom_sigma_t_scaling_d, & 
+!                                              st_size_atom_sigma_t, gpu_stream)
 
   call gpu_get_radial_exp_coeff_poly3gauss(radial_exp_coeff_d, radial_exp_coeff_der_d, &
                                 i_beg_d, i_end_d, &
@@ -641,7 +651,8 @@ module soap_turbo_desc
                                 gpu_stream)
 ! For the angular expansion the masking works differently, since we do not have a species-augmented basis as in the
 ! radial expansion part.
-  call get_angular_expansion_coefficients(n_sites, n_neigh, thetas, phis, rjs, atom_sigma_t, atom_sigma_t_scaling, &
+! call get_angular_expansion_coefficients(n_sites, n_neigh, thetas, phis, rjs, atom_sigma_t, atom_sigma_t_scaling, &
+  call get_angular_expansion_coefficients(n_sites, n_neigh, thetas, phis, rjs, &
                                           rcut_max, l_max, eimphi, preflm, plm_array, prefl, prefm, &
                                           fact_array, mask, n_species, eimphi_rad_der, &
                                           do_derivatives, prefl_rad_der, angular_exp_coeff, angular_exp_coeff_rad_der, &
@@ -976,14 +987,14 @@ module soap_turbo_desc
   call gpu_free_async(phis_d,gpu_stream)
   call gpu_free_async(rjs_d,gpu_stream)
   call gpu_free_async(mask_d,gpu_stream)
-  call gpu_free_async(atom_sigma_t_d,gpu_stream)
-  call gpu_free_async(atom_sigma_t_scaling_d,gpu_stream)
-  call gpu_free_async(atom_sigma_r_d,gpu_stream)
+! call gpu_free_async(atom_sigma_t_d,gpu_stream)
+! call gpu_free_async(atom_sigma_t_scaling_d,gpu_stream)
+! call gpu_free_async(atom_sigma_r_d,gpu_stream)
   call gpu_free_async(k2_start_d,gpu_stream)
   !call gpu_free_async(n_neigh_d,gpu_stream)
   call gpu_free_async(species_d,gpu_stream)
   call gpu_free_async(species_multiplicity_d,gpu_stream)
-  call gpu_free_async(rcut_hard_d,gpu_stream)
+! call gpu_free_async(rcut_hard_d,gpu_stream)
   call gpu_free_async(W_d,gpu_stream)
   call gpu_free_async(S_d,gpu_stream)
   !call gpu_free_async(k2_i_site_d,gpu_stream)
@@ -993,8 +1004,8 @@ module soap_turbo_desc
   call gpu_free_async(multiplicity_array_d,gpu_stream)
   call gpu_free_async(skip_soap_component_d,gpu_stream)
   call gpu_free_async(sqrt_dot_p_d,gpu_stream)
-  call gpu_free_async(central_weight_d,gpu_stream)
-  call gpu_free_async(global_scaling_d,gpu_stream)
+! call gpu_free_async(central_weight_d,gpu_stream)
+!  call gpu_free_async(global_scaling_d,gpu_stream)
   call gpu_free_async(cnk_d,gpu_stream)
   
   !call cpu_time(ttt(2))

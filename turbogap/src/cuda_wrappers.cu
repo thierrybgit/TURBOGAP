@@ -1426,11 +1426,8 @@ __global__ void cuda_get_exp_coeff_one(hipDoubleComplex *eimphi_global_d, double
     double phi=phis_d[k_ij];
     if(rj<rcut){
       int i_sp=1;
-      for(i_sp=1;i_sp<=n_species; i_sp++){
-        if(mask_d[k_ij+(i_sp-1)*n_atom_pairs]){
-          break;
-        }
-      }
+      for(i_sp=1;i_sp<=n_species; i_sp++)
+        if(mask_d[k_ij+(i_sp-1)*n_atom_pairs]) break;
       double atom_sigma=atom_sigma_in_d[i_sp-1] + atom_sigma_scaling_d[i_sp-1]*rj;
       double scaling=atom_sigma_scaling_d[i_sp-1];
       double rjbysigma=rj/atom_sigma;
@@ -1439,16 +1436,13 @@ __global__ void cuda_get_exp_coeff_one(hipDoubleComplex *eimphi_global_d, double
       double x2=x*x;
       double x4=x2*x2;
       double flm2, flm1,fl; 
-
       double coeff1 = 2.0*rj/atom_sigma*atom_sigma;
       double coeff2 = 1.0 - scaling*rj/atom_sigma;
       
       if(x>0){
         flm2=fabs((1.0-exp(-2.0*x2))/2.0/x2);
         flm1=fabs((x2-1.0+exp(-2.0*x2)*(x2+1.0))/2.0/x4);
-      }
-      else
-      {
+      } else {
         flm2=1.0;
         flm1=0.0;
       }
@@ -1460,39 +1454,25 @@ __global__ void cuda_get_exp_coeff_one(hipDoubleComplex *eimphi_global_d, double
       double sinm1 = 0.0;
       hipDoubleComplex  loc_prefm;
       loc_prefm.x= 1.0;
-      loc_prefm.y=0.0; /// (1.d0, 0.d0)*/
+      loc_prefm.y=0.0; // (1.d0, 0.d0)*
       prefm_global_d[k_ij] = loc_prefm;
       double ilexp=-500000;// no need for this, just makig sure the next lines were working
       
       double fact=1.0;
       int k=0;
       for(int l=0;l<=lmax; l++){
-        if(l>0){
-          fact=fact*(2.0*l+1.0);
-        }
+        if(l>0) fact=fact*(2.0*l+1.0);
         if(l==0){
-          if(x< xcut) {
-            ilexp=1.0-x2;
-          }
-          else{
-            ilexp=flm2;
-          }
+          if(x< xcut) ilexp=1.0-x2;
+          else ilexp=flm2;
         }
         else if(l==1){
-          if(x2/1000.0<xcut){
-            ilexp=(x2-x4)/fact; //fact_array_d[l-1];
-          }
-          else{
-            ilexp=flm1;
-          }
+          if(x2/1000.0<xcut) ilexp=(x2-x4)/fact; //fact_array_d[l-1];
+          else ilexp=flm1;
         }
         else{
-          if(pow(x2,l)/fact*l<xcut){ // if(pow(x2,l)/fact_array_d[l-1]*l<xcut){
-            fl=pow(x2,l)/fact;
-          }
-          else{
-            fl=fabs(flm2-(2.0*l-1.0)/x2*flm1);
-          }
+          if(pow(x2,l)/fact*l<xcut) fl=pow(x2,l)/fact;
+          else fl=fabs(flm2-(2.0*l-1.0)/x2*flm1);
           flm2=flm1;
           flm1=fl;
           ilexp=fl;
@@ -1862,7 +1842,7 @@ void kernel_get_radial_poly3gauss(int n_atom_pairs, int n_species, bool *mask_d,
 
   int n,d,k;
   double  ampli_tude, ampli_tude_der, atom_sigma_scaled, amplitude_scaling, C1, C2, W_exp, nf, atom_sigma_f, rj_f, sf2;
-  double tmp1, tmp2, tmp3, tmp4, tmp5;
+  double tmp1, tmp2, tmp3, tmp4, tmp5,tmp6,tmp7;
 
   int k_ij=threadIdx.x+blockIdx.x*blockDim.x;
   if(k_ij<n_atom_pairs){
@@ -1905,6 +1885,7 @@ void kernel_get_radial_poly3gauss(int n_atom_pairs, int n_species, bool *mask_d,
 	    double amplitude_scaling = amplitude_scaling_d[i_sp];
 	    tmp1 = 1.0 + rj * rj * (2.0 * rj - 3.0);
             tmp2 = atom_sigma_scaling / atom_sigma_scaled;
+	    tmp3 = 6.0 / atom_sigma_scaled * rj * (rj - 1.0);
 	    if (mode==mode_polynomial) {
               if( amplitude_scaling == 0.0 ){
                 ampli_tude = 1.0 / atom_sigma_scaled;
@@ -1915,11 +1896,10 @@ void kernel_get_radial_poly3gauss(int n_atom_pairs, int n_species, bool *mask_d,
               } else {
                 if( amplitude_scaling == 1.0 ){
                   ampli_tude = 1.0 / atom_sigma_scaled * tmp1;
-                  ampli_tude_der = 6.0 / atom_sigma_scaled * (pow(rj,2) - rj) - tmp2 * ampli_tude;
+                  ampli_tude_der = tmp3 - tmp2 * ampli_tude;
                 } else {
                   ampli_tude = 1.0 / atom_sigma_scaled * pow(tmp1,amplitude_scaling);
-                  ampli_tude_der = 6.0*amplitude_scaling / atom_sigma_scaled * (pow(rj,2) - rj) * pow(tmp1,amplitude_scaling - 1.0)
-                                   - tmp2 * ampli_tude;
+                  ampli_tude_der = amplitude_scaling * tmp3 * pow(tmp1,amplitude_scaling - 1.0) - tmp2 -ampli_tude;
                 }
               }
             }
@@ -1939,10 +1919,7 @@ void kernel_get_radial_poly3gauss(int n_atom_pairs, int n_species, bool *mask_d,
             double N_np1 = N_a(rcut_hard, -2);
             double I_np1 = sqrt(pi/2.0) * atom_sigma_scaled * ( erf( (rcut_soft-rj)/sq2/atom_sigma_scaled ) - erf( (-rj)/sq2/atom_sigma_scaled ) ) / N_np1;
 	    double I_np2, N_np2;
-            if( rcut_hard_in == rcut_soft_in )
-              C1 = 0.0;
-            else
-              C1 = s2 / dr * exp(-0.5 * pow(rcut_soft - rj,2) / s2);
+	    C1 = (rcut_hard_in == rcut_soft_in) ? 0.0 : s2 / dr * exp(-0.5 * pow(rcut_soft - rj,2) / s2);
             C2 = s2 / rcut_hard * exp(-0.5 * pow(rj,2) / s2);
             for (n = -1; n<=alpha_max_der-1;n++){
               C1 = C1 * dr;
@@ -1960,10 +1937,15 @@ void kernel_get_radial_poly3gauss(int n_atom_pairs, int n_species, bool *mask_d,
               tmp2 = (rj - rcut_hard) / s2 * (tmp1 - 1.0);
               tmp3 = rcut_hard * ( 2.0 * tmp1 - 1.0 ) / s2;
               tmp4 = atom_sigma_scaling * rcut_hard * rcut_hard / pow(atom_sigma_scaled,3);
-              for (n = 1; n<=alpha_max-1; n++)
-                exp_coeff_der_temp_d[k_ij*n_temp_der+n-1] = tmp2 * exp_coeff_temp1_d[k_ij*n_temp+n-1] +
-                                                            tmp3 * N_a(rcut_hard, n+1) / N_a(rcut_hard, n) * exp_coeff_temp1_d[k_ij*n_temp+n] +
-                                                            tmp4 * N_a(rcut_hard, n+2) / N_a(rcut_hard, n) * exp_coeff_temp1_d[k_ij*n_temp+n+1];
+	      tmp5 = exp_coeff_temp1_d[k_ij*n_temp];
+	      tmp6 = exp_coeff_temp1_d[k_ij*n_temp+1];
+              for (n = 1; n<=alpha_max-1; n++){
+	        tmp7 = exp_coeff_temp1_d[k_ij*n_temp+n+1];
+                exp_coeff_der_temp_d[k_ij*n_temp_der+n-1] = tmp2 * tmp5 + tmp3 * N_a(rcut_hard, n+1) / N_a(rcut_hard, n) * tmp6 +
+                                                            tmp4 * N_a(rcut_hard, n+2) / N_a(rcut_hard, n) * tmp7;
+		tmp5 = tmp6;
+		tmp6 = tmp7;
+	      }
             }
             if (false || (rcut_soft - rj) < 4.0*atom_sigma_scaled) {
 	      nf = nf_d[i_sp];
@@ -1996,12 +1978,15 @@ void kernel_get_radial_poly3gauss(int n_atom_pairs, int n_species, bool *mask_d,
                 tmp2 = (rj_f - rcut_hard) / sf2 * ( der_sjf_rj * (rj_f - rcut_hard) / atom_sigma_f - der_rjf_rj );
                 tmp3 = rcut_hard / sf2 * ( 2.0 * der_sjf_rj * (rj_f - rcut_hard) / atom_sigma_f - der_rjf_rj );
                 tmp4 = der_sjf_rj * rcut_hard * rcut_hard / pow(atom_sigma_f,3);
-                for (n = 1; n <=alpha_max-1;n++)
-                  exp_coeff_der_temp_d[k_ij*n_temp_der+n-1] = exp_coeff_der_temp_d[k_ij*n_temp_der+n-1] + pref_f * (
-                                                              tmp2 * exp_coeff_temp2_d[k_ij*n_temp+n-1] +
-                                                              tmp3 * N_a(rcut_hard, n+1) / N_a(rcut_hard, n) * exp_coeff_temp2_d[k_ij*n_temp+n] +
-                                                              tmp4 * N_a(rcut_hard, n+2) / N_a(rcut_hard, n) * exp_coeff_temp2_d[k_ij*n_temp+n+1] )
-                                                              + der_pref_f *  exp_coeff_temp2_d[k_ij*n_temp+n-1];
+		tmp5 = exp_coeff_temp2_d[k_ij*n_temp];
+		tmp6 = exp_coeff_temp2_d[k_ij*n_temp+1];
+                for (n = 1; n <=alpha_max-1;n++){
+	          tmp7 = exp_coeff_temp2_d[k_ij*n_temp+n+1];
+                  exp_coeff_der_temp_d[k_ij*n_temp_der+n-1] += pref_f * ( tmp2 * tmp5 + tmp3 * N_a(rcut_hard, n+1) / N_a(rcut_hard, n) * tmp6 +
+                                                              tmp4 * N_a(rcut_hard, n+2) / N_a(rcut_hard, n) * tmp7) + der_pref_f * tmp5;
+		  tmp5 = tmp6;
+		  tmp6 = tmp7;
+		}
               }
             }
 	    exp_coeff_temp1_d[k_ij*n_temp+alpha_max-1] = 0.0;
@@ -2083,7 +2068,7 @@ void kernel_get_radial_poly3(int n_atom_pairs, int n_species, bool *mask_d, doub
 
   int n,d,k;
   double  ampli_tude, ampli_tude_der, atom_sigma_scaled, amplitude_scaling, C1, C2, W_exp, nf, atom_sigma_f, rj_f, sf2;
-  double tmp1, tmp2, tmp3, tmp4, tmp5;
+  double tmp1, tmp2, tmp3, tmp4, tmp5, tmp6, tmp7;
 
   int k_ij=threadIdx.x+blockIdx.x*blockDim.x;
   if(k_ij<n_atom_pairs){
@@ -2125,6 +2110,7 @@ void kernel_get_radial_poly3(int n_atom_pairs, int n_species, bool *mask_d, doub
             double amplitude_scaling = amplitude_scaling_d[i_sp];
 	    tmp1 = 1.0 + rj * rj * (2.0 * rj - 3.0);
             tmp2 = atom_sigma_scaling / atom_sigma_scaled;
+	    tmp3 = 6.0 / atom_sigma_scaled * rj * (rj - 1.0);
             if (mode==mode_polynomial) {
               if( amplitude_scaling == 0.0 ){
                 ampli_tude = 1.0 / atom_sigma_scaled;
@@ -2135,11 +2121,10 @@ void kernel_get_radial_poly3(int n_atom_pairs, int n_species, bool *mask_d, doub
               } else {
                 if( amplitude_scaling == 1.0 ){
                   ampli_tude = 1.0 / atom_sigma_scaled * tmp1;
-                  ampli_tude_der = 6.0 / atom_sigma_scaled * (pow(rj,2) - rj) - tmp2 * ampli_tude;
+                  ampli_tude_der = tmp3 - tmp2 * ampli_tude;
                 } else {
                   ampli_tude = 1.0 / atom_sigma_scaled * pow(tmp1,amplitude_scaling);
-                  ampli_tude_der = 6.0*amplitude_scaling / atom_sigma_scaled * (pow(rj,2) - rj) * pow(tmp1,amplitude_scaling - 1.0)
-                                   - tmp2 * ampli_tude;
+                  ampli_tude_der = tmp3 * amplitude_scaling * pow(tmp1,amplitude_scaling - 1.0) - tmp2 * ampli_tude;
                 }
               }
             }
@@ -2163,14 +2148,11 @@ void kernel_get_radial_poly3(int n_atom_pairs, int n_species, bool *mask_d, doub
             double N_np1 = N_a(rcut_hard, -2);
             double I_np1 = sqrt(pi/2.0) * atom_sigma_scaled * ( erf( (rcut_soft-rj)/sq2/atom_sigma_scaled ) - erf( (-rj)/sq2/atom_sigma_scaled ) ) / N_np1;
             double I_np2, N_np2;
-            if( rcut_hard_in == rcut_soft_in )
-              C1 = 0.0;
-            else
-              C1 = s2 / dr * exp(-0.5 * pow(rcut_soft - rj,2) / s2);
+	    C1 = (rcut_hard_in == rcut_soft_in) ? 0.0 : s2 / dr * exp(-0.5 * pow(rcut_soft - rj,2) / s2);
             C2 = s2 / rcut_hard * exp(-0.5 * pow(rj,2) / s2);
             for (n = -1; n<=alpha_max_der;n++){
-              C1 = C1 * dr;
-              C2 = C2 * rcut_hard;
+              C1 *= dr;
+              C2 *= rcut_hard;
               N_np2 = N_a(rcut_hard, n);
               I_np2 = s2 * double(n+1) * N_n/ N_np2 * I_n - N_np1 * (rj - rcut_hard) / N_np2 * I_np1 + C1 / N_np2  - C2 / N_np2;
               if(n > 0) exp_coeff_temp1_d[k_ij*n_temp+n-1] = I_np2;
@@ -2180,14 +2162,19 @@ void kernel_get_radial_poly3(int n_atom_pairs, int n_species, bool *mask_d, doub
               I_np1 = I_np2;
             }
 	    if( do_derivatives ) {
-              tmp1 = atom_sigma_scaling * (rj - rcut_hard) / atom_sigma_scaled;
+	      tmp1 = atom_sigma_scaling * (rj - rcut_hard) / atom_sigma_scaled;
               tmp2 = (rj - rcut_hard) / s2 * (tmp1 - 1.0);
               tmp3 = rcut_hard * ( 2.0 * tmp1 - 1.0 ) / s2;
               tmp4 = atom_sigma_scaling * rcut_hard * rcut_hard / pow(atom_sigma_scaled,3);
-              for (n = 1; n<=alpha_max-1; n++)
-                exp_coeff_der_temp_d[k_ij*n_temp_der+n-1] = tmp2 * exp_coeff_temp1_d[k_ij*n_temp+n-1] +
-                                                            tmp3 * N_a(rcut_hard, n+1) / N_a(rcut_hard, n) * exp_coeff_temp1_d[k_ij*n_temp+n] +
-                                                            tmp4 * N_a(rcut_hard, n+2) / N_a(rcut_hard, n) * exp_coeff_temp1_d[k_ij*n_temp+n+1];
+              tmp5 = exp_coeff_temp1_d[k_ij*n_temp];
+              tmp6 = exp_coeff_temp1_d[k_ij*n_temp+1];
+              for (n = 1; n<=alpha_max-1; n++) {
+		tmp7 = exp_coeff_temp1_d[k_ij*n_temp+n+1];
+                exp_coeff_der_temp_d[k_ij*n_temp_der+n-1] = tmp2 * tmp5 + tmp3 * N_a(rcut_hard, n+1) / N_a(rcut_hard, n) * tmp6 +
+                                                            tmp4 * N_a(rcut_hard, n+2) / N_a(rcut_hard, n) * tmp7;
+                tmp5 = tmp6;
+                tmp6 = tmp7;
+              }
             }
             if (false || (rcut_soft - rj) < 4.0*atom_sigma_scaled) {
 	      nf = nf_d[i_sp];
@@ -2217,15 +2204,19 @@ void kernel_get_radial_poly3(int n_atom_pairs, int n_species, bool *mask_d, doub
                 double der_rjf_rj = (2.0*atom_sigma_scaled*rcut_soft*atom_sigma_scaling + tmp1) / denom - (s2*rcut_soft + tmp1 * rj) * 2.0 *
                                     atom_sigma_scaled * atom_sigma_scaling / pow(denom,2);
                 double der_sjf_rj = atom_sigma_scaling * dr/nf / sqrt(denom) * (1.0 - pow(atom_sigma_scaled,2)/denom);
-                tmp2 = (rj_f - rcut_hard) / sf2 * ( der_sjf_rj * (rj_f - rcut_hard) / atom_sigma_f - der_rjf_rj );
+
+		tmp2 = (rj_f - rcut_hard) / sf2 * ( der_sjf_rj * (rj_f - rcut_hard) / atom_sigma_f - der_rjf_rj );
                 tmp3 = rcut_hard / sf2 * ( 2.0 * der_sjf_rj * (rj_f - rcut_hard) / atom_sigma_f - der_rjf_rj );
                 tmp4 = der_sjf_rj * rcut_hard * rcut_hard / pow(atom_sigma_f,3);
-                for (n = 1; n <=alpha_max-1;n++)
-                  exp_coeff_der_temp_d[k_ij*n_temp_der+n-1] = exp_coeff_der_temp_d[k_ij*n_temp_der+n-1] + pref_f * (
-                                                              tmp2 * exp_coeff_temp2_d[k_ij*n_temp+n-1] +
-                                                              tmp3 * N_a(rcut_hard, n+1) / N_a(rcut_hard, n) * exp_coeff_temp2_d[k_ij*n_temp+n] +
-                                                              tmp4 * N_a(rcut_hard, n+2) / N_a(rcut_hard, n) * exp_coeff_temp2_d[k_ij*n_temp+n+1] )
-                                                              + der_pref_f *  exp_coeff_temp2_d[k_ij*n_temp+n-1];
+                tmp5 = exp_coeff_temp2_d[k_ij*n_temp];
+                tmp6 = exp_coeff_temp2_d[k_ij*n_temp+1];
+                for (n = 1; n <=alpha_max-1;n++){
+                  tmp7 = exp_coeff_temp2_d[k_ij*n_temp+n+1];
+                  exp_coeff_der_temp_d[k_ij*n_temp_der+n-1] += pref_f * ( tmp2 * tmp5 + tmp3 * N_a(rcut_hard, n+1) / N_a(rcut_hard, n) * tmp6 +
+                                                              tmp4 * N_a(rcut_hard, n+2) / N_a(rcut_hard, n) * tmp7) + der_pref_f * tmp5;
+                  tmp5 = tmp6;
+                  tmp6 = tmp7;
+                }
               }
             }
             if (do_derivatives) {

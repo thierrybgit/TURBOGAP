@@ -75,7 +75,7 @@ program turbogap
             time_mpi(1:3) = 0.d0, time_core_pot(1:3), time_vdw(1:3), instant_pressure, lv(1:3,1:3), &
             time_mpi_positions(1:3) = 0.d0, time_mpi_ef(1:3) = 0.d0, time_md(3) = 0.d0, &
             instant_pressure_tensor(1:3, 1:3), time_step, md_time, &
-            solo_time_soap=0.d0, soap_time_soap(3)=0.d0, time_get_soap=0.d0
+            solo_time_soap=0.d0, soap_time_soap(3)=0.d0, time_get_soap=0.d0,t1
   integer, allocatable :: displs(:), displs2(:), counts(:), counts2(:)
   integer :: update_bar, n_sparse
   logical, allocatable :: do_list(:), has_vdw_mpi(:), fix_atom(:,:)
@@ -137,8 +137,11 @@ program turbogap
   integer :: sp1, sp2
   logical(c_bool) :: c_do_forces
   integer(c_size_t) :: st_n_sites_int,st_n_sites_double, st_n_atom_pairs_int, st_n_atom_pairs_double, st_n_sparse_double, st_virial
+  integer(c_size_t) :: st_size_nf, st_size_rcut_hard
   type(c_ptr) :: n_neigh_d, species_d, neighbor_species_d, rjs_d, alphas_d,cutoff_d,qs_d,xyz_d
   type(c_ptr) :: energies_2b_d,forces_2b_d,virial_2b_d,x_d,V_d,dVdx2_d,forces_core_pot_d,virial_core_pot_d,energies_core_pot_d
+  type(c_ptr) :: nf_d, rcut_hard_d, rcut_soft_d, global_scaling_d, atom_sigma_r_d, atom_sigma_r_scaling_d
+  type(c_ptr) :: atom_sigma_t_d, atom_sigma_t_scaling_d, amplitude_scaling_d, alpha_max_d, central_weight_d, Qs_d
 !**************************************************************************
 
 ! integer :: n_ii,i_ii, j_jj,k_ii
@@ -1138,6 +1141,38 @@ program turbogap
         call get_number_of_atom_pairs( n_neigh(i_beg:i_end), rjs(j_beg:j_end), soap_turbo_hypers(i)%rcut_max, &
                                        soap_turbo_hypers(i)%l_max, soap_turbo_hypers(i)%n_max, &
                                        params%max_Gbytes_per_process, i_beg_list, i_end_list, j_beg_list, j_end_list )
+        n_sp = soap_turbo_hypers(i)%n_species
+        st_size_nf=n_sp*sizeof(soap_turbo_hypers(i)%nf(1))
+        call gpu_malloc_all(nf_d,st_size_nf, gpu_stream)
+        call cpy_htod(c_loc(soap_turbo_hypers(i)%nf),nf_d,st_size_nf, gpu_stream)
+        call gpu_malloc_all(rcut_hard_d,st_size_nf, gpu_stream)
+        call cpy_htod(c_loc(soap_turbo_hypers(i)%rcut_hard),rcut_hard_d,st_size_nf, gpu_stream)
+        call gpu_malloc_all(rcut_soft_d,st_size_nf, gpu_stream)
+        call cpy_htod(c_loc(soap_turbo_hypers(i)%rcut_soft),rcut_soft_d,st_size_nf, gpu_stream)
+        call gpu_malloc_all(global_scaling_d,st_size_nf, gpu_stream)
+        call cpy_htod(c_loc(soap_turbo_hypers(i)%global_scaling),global_scaling_d,st_size_nf, gpu_stream)
+        call gpu_malloc_all(atom_sigma_r_d,st_size_nf, gpu_stream)
+        call cpy_htod(c_loc(soap_turbo_hypers(i)%atom_sigma_r),atom_sigma_r_d,st_size_nf, gpu_stream)
+        call gpu_malloc_all(atom_sigma_r_scaling_d,st_size_nf, gpu_stream)
+        call cpy_htod(c_loc(soap_turbo_hypers(i)%atom_sigma_r_scaling),atom_sigma_r_scaling_d,st_size_nf, gpu_stream)
+        call gpu_malloc_all(atom_sigma_t_d,st_size_nf, gpu_stream)
+        call cpy_htod(c_loc(soap_turbo_hypers(i)%atom_sigma_t),atom_sigma_t_d,st_size_nf, gpu_stream)
+        call gpu_malloc_all(atom_sigma_t_scaling_d,st_size_nf, gpu_stream)
+        call cpy_htod(c_loc(soap_turbo_hypers(i)%atom_sigma_t_scaling),atom_sigma_t_scaling_d,st_size_nf, gpu_stream)
+        call gpu_malloc_all(amplitude_scaling_d,st_size_nf, gpu_stream)
+        call cpy_htod(c_loc(soap_turbo_hypers(i)%amplitude_scaling),amplitude_scaling_d,st_size_nf, gpu_stream)
+        call gpu_malloc_all(central_weight_d,st_size_nf, gpu_stream)
+        call cpy_htod(c_loc(soap_turbo_hypers(i)%central_weight),central_weight_d,st_size_nf, gpu_stream)
+        st_size_nf=n_sp*sizeof(soap_turbo_hypers(i)%alpha_max(1))
+        call gpu_malloc_all(alpha_max_d,st_size_nf, gpu_stream)
+        call cpy_htod(c_loc(soap_turbo_hypers(i)%alpha_max),alpha_max_d,st_size_nf, gpu_stream)
+        n_sparse = soap_turbo_hypers(i)%n_sparse
+        st_size_nf=n_sparse*sizeof(soap_turbo_hypers(i)%nf(1))
+        call gpu_malloc_all(alphas_d,st_size_nf, gpu_stream)
+        call cpy_htod(c_loc(soap_turbo_hypers(i)%alphas),alphas_d,st_size_nf, gpu_stream)
+        st_size_nf=n_sparse*dim*sizeof(soap_turbo_hypers(i)%nf(1))
+        call gpu_malloc_all(Qs_d,st_size_nf, gpu_stream)
+        call cpy_htod(c_loc(soap_turbo_hypers(i)%Qs),Qs_d,st_size_nf, gpu_stream)
         do j = 1, size(i_beg_list)
           this_i_beg = i_beg - 1 + i_beg_list(j)
           this_i_end = i_beg - 1 + i_end_list(j)
@@ -1157,24 +1192,28 @@ program turbogap
               this_hirshfeld_v_cart_der_pt => this_hirshfeld_v_cart_der(1:3, this_j_beg:this_j_end)
             end if
           end if
-          !write(*,*) "Before get_gap_soap"
-          call get_gap_soap(n_sites, this_n_sites_mpi, n_neigh(this_i_beg:this_i_end), neighbors_list(this_j_beg:this_j_end), &
+          call get_gap_soap(n_sparse, n_sites, this_n_sites_mpi, n_neigh(this_i_beg:this_i_end), neighbors_list(this_j_beg:this_j_end), &
                             soap_turbo_hypers(i)%n_species, soap_turbo_hypers(i)%species_types, &
                             rjs(this_j_beg:this_j_end), thetas(this_j_beg:this_j_end), phis(this_j_beg:this_j_end), &
                             xyz(1:3, this_j_beg:this_j_end), &
-                            soap_turbo_hypers(i)%alpha_max, &
-                            soap_turbo_hypers(i)%l_max, soap_turbo_hypers(i)%dim, soap_turbo_hypers(i)%rcut_hard, &
-                            soap_turbo_hypers(i)%rcut_soft, soap_turbo_hypers(i)%nf, soap_turbo_hypers(i)%global_scaling, &
-                            soap_turbo_hypers(i)%atom_sigma_r, soap_turbo_hypers(i)%atom_sigma_r_scaling, &
-                            soap_turbo_hypers(i)%atom_sigma_t, soap_turbo_hypers(i)%atom_sigma_t_scaling, &
-                            soap_turbo_hypers(i)%amplitude_scaling, soap_turbo_hypers(i)%radial_enhancement, &
-                            soap_turbo_hypers(i)%central_weight, soap_turbo_hypers(i)%basis, &
+                            alpha_max_d, soap_turbo_hypers(i)%alpha_max, &
+                            soap_turbo_hypers(i)%l_max, soap_turbo_hypers(i)%dim, rcut_hard_d, soap_turbo_hypers(i)%rcut_hard, &
+                           !soap_turbo_hypers(i)%rcut_soft, soap_turbo_hypers(i)%nf, soap_turbo_hypers(i)%global_scaling, &
+                            rcut_soft_d, nf_d, global_scaling_d, &
+!                           soap_turbo_hypers(i)%atom_sigma_r, soap_turbo_hypers(i)%atom_sigma_r_scaling, &
+                            atom_sigma_r_d, soap_turbo_hypers(i)%atom_sigma_r, atom_sigma_r_scaling_d, &
+!                           soap_turbo_hypers(i)%atom_sigma_t, soap_turbo_hypers(i)%atom_sigma_t_scaling, &
+                            atom_sigma_t_d, atom_sigma_t_scaling_d, &
+!                           soap_turbo_hypers(i)%amplitude_scaling, soap_turbo_hypers(i)%radial_enhancement, &
+                            amplitude_scaling_d, soap_turbo_hypers(i)%radial_enhancement, &
+!                           soap_turbo_hypers(i)%central_weight, soap_turbo_hypers(i)%basis, &
+                            central_weight_d, soap_turbo_hypers(i)%central_weight, soap_turbo_hypers(i)%basis, &
                             soap_turbo_hypers(i)%scaling_mode, params%do_timing, params%do_derivatives, params%do_forces, &
                             params%do_prediction, params%write_soap, params%write_derivatives, &
                             soap_turbo_hypers(i)%compress_soap, soap_turbo_hypers(i)%compress_soap_indices, &
                             soap_turbo_hypers(i)%delta, soap_turbo_hypers(i)%zeta, soap_turbo_hypers(i)%central_species, &
-                            xyz_species(this_i_beg:this_i_end), xyz_species_supercell, soap_turbo_hypers(i)%alphas, &
-                            soap_turbo_hypers(i)%Qs, params%all_atoms, params%which_atom, indices, soap, soap_cart_der, &
+                            xyz_species(this_i_beg:this_i_end), xyz_species_supercell, alphas_d, &
+                            Qs_d, params%all_atoms, params%which_atom, indices, soap, soap_cart_der, &
                             der_neighbors, der_neighbors_list, &
                             soap_turbo_hypers(i)%has_vdw, soap_turbo_hypers(i)%vdw_Qs, soap_turbo_hypers(i)%vdw_alphas, &
                             soap_turbo_hypers(i)%vdw_zeta, soap_turbo_hypers(i)%vdw_delta, soap_turbo_hypers(i)%vdw_V0, &
@@ -1199,6 +1238,19 @@ program turbogap
             ! write(*,*)
           end if
         end do
+        call gpu_free_async(nf_d,gpu_stream)
+        call gpu_free_async(rcut_hard_d,gpu_stream)
+        call gpu_free_async(rcut_soft_d,gpu_stream)
+        call gpu_free_async(global_scaling_d,gpu_stream)
+        call gpu_free_async(atom_sigma_r_d,gpu_stream)
+        call gpu_free_async(atom_sigma_r_scaling_d,gpu_stream)
+        call gpu_free_async(atom_sigma_t_d,gpu_stream)
+        call gpu_free_async(atom_sigma_t_scaling_d,gpu_stream)
+        call gpu_free_async(amplitude_scaling_d,gpu_stream)
+        call gpu_free_async(alpha_max_d,gpu_stream)
+        call gpu_free_async(central_weight_d,gpu_stream)
+        call gpu_free_async(alphas_d,gpu_stream)
+        call gpu_free_async(Qs_d,gpu_stream)
         !call cpu_time(soap_time_soap(2))
         soap_time_soap(2)=MPI_Wtime()
         deallocate( i_beg_list, i_end_list, j_beg_list, j_end_list )
@@ -1382,6 +1434,8 @@ program turbogap
         st_n_atom_pairs_double=n_atom_pairs*sizeof(rjs(1))
         call gpu_malloc_all(rjs_d,st_n_atom_pairs_double,gpu_stream)
         call cpy_htod(c_loc(rjs),rjs_d, st_n_atom_pairs_double,gpu_stream)
+        call gpu_malloc_all(xyz_d,3*st_n_atom_pairs_double,gpu_stream)
+        call cpy_htod(c_loc(xyz),xyz_d,3*st_n_atom_pairs_double,gpu_stream)
         st_n_sites_double=n_sites*sizeof(energies_2b(1))
         call gpu_malloc_all(energies_2b_d,st_n_sites_double,gpu_stream)
         call cpy_htod(c_loc(energies_2b),energies_2b_d, st_n_sites_double,gpu_stream)
@@ -1390,10 +1444,9 @@ program turbogap
         st_virial=9*sizeof(virial_2b(1,1))
         call gpu_malloc_all(virial_2b_d,st_virial,gpu_stream)
         call cpy_htod(c_loc(virial_2b),virial_2b_d, st_virial,gpu_stream)
-        call gpu_malloc_all(xyz_d,3*st_n_atom_pairs_double,gpu_stream)
-        call cpy_htod(c_loc(xyz),xyz_d,3*st_n_atom_pairs_double,gpu_stream)
 
         do i = 1, n_distance_2b
+          time_2b(1)=MPI_Wtime()
           n_sparse = distance_2b_hypers(i)%n_sparse
           st_n_sparse_double=n_sparse*sizeof( distance_2b_hypers(i)%alphas(1))
           call gpu_malloc_all(alphas_d,st_n_sparse_double,gpu_stream)
@@ -1404,7 +1457,6 @@ program turbogap
           call cpy_htod(c_loc(distance_2b_hypers(i)%Qs(:,1)),qs_d,st_n_sparse_double,gpu_stream)
 
           !call cpu_time(time_2b(1))
-          time_2b(1)=MPI_Wtime()
 !          this_energies = 0.d0
 !          if( params%do_forces )then
 !           this_forces = 0.d0
@@ -1460,6 +1512,7 @@ program turbogap
 !           virial_2b = virial_2b + this_virial
 !         end if
 
+          t1=MPI_Wtime()
           call gpu_get_2b_forces_energies(i_beg, i_end, n_sparse, energies_2b_d, 0.0d0, n_neigh_d, c_do_forces, forces_2b_d,   & 
                                           virial_2b_d, rjs_d, distance_2b_hypers(i)%rcut, species_d, neighbor_species_d, sp1,  &
                                           sp2, 0.5d0, distance_2b_hypers(i)%delta, cutoff_d, qs_d, distance_2b_hypers(i)%sigma,&
@@ -1471,7 +1524,6 @@ program turbogap
           time_2b(2)=MPI_Wtime()
           time_2b(3) = time_2b(3) + time_2b(2) - time_2b(1)
         end do
-
         call cpy_dtoh(energies_2b_d, c_loc(energies_2b),st_n_sites_double, gpu_stream)
         call cpy_dtoh(forces_2b_d, c_loc(forces_2b),3*st_n_sites_double, gpu_stream)
         call cpy_dtoh(virial_2b_d, c_loc(virial_2b),st_virial, gpu_stream)
@@ -1528,12 +1580,6 @@ program turbogap
           time_core_pot(2)=MPI_Wtime()
           time_core_pot(3) = time_core_pot(3) + time_core_pot(2) - time_core_pot(1)
         end do
-
-        call gpu_free_async(species_d,gpu_stream)
-        call gpu_free_async(n_neigh_d,gpu_stream)
-        call gpu_free_async(neighbor_species_d,gpu_stream)
-        call gpu_free_async(rjs_d,gpu_stream)
-        call gpu_free_async(xyz_d,gpu_stream)
 
         call cpy_dtoh(energies_core_pot_d, c_loc(energies_core_pot),st_n_sites_double, gpu_stream)
         call cpy_dtoh(forces_core_pot_d, c_loc(forces_core_pot),3*st_n_sites_double, gpu_stream)
@@ -1593,6 +1639,12 @@ program turbogap
           time_3b(2)=MPI_Wtime()
           time_3b(3) = time_3b(3) + time_3b(2) - time_3b(1)
         end do
+
+        call gpu_free_async(species_d,gpu_stream)
+        call gpu_free_async(n_neigh_d,gpu_stream)
+        call gpu_free_async(neighbor_species_d,gpu_stream)
+        call gpu_free_async(rjs_d,gpu_stream)
+        call gpu_free_async(xyz_d,gpu_stream)
 
 
         !call cpu_time(time2)
