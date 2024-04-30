@@ -615,10 +615,38 @@ module gap
 
 
 
+!*****************************************************************
 
+  subroutine setup_3b_gpu(kernel_type, species_center, species1, species2, species_types,c_name,sp0, sp1, sp2)
+  implicit none
+    character(kind=c_char,len=4) :: c_name
+    character*3, intent(in) :: kernel_type
+    character*8, intent(in) :: species_center, species1, species2, species_types(:)
+    integer, intent(out) :: sp0, sp1, sp2
+    integer :: i
 
+    c_name = trim(kernel_type)//c_null_char
+    !Map species to index
+    do i = 1, size(species_types)
+      if( species_center == species_types(i) )then
+        sp0 = i
+        exit
+      end if
+    end do
+    do i = 1, size(species_types)
+      if( species1 == species_types(i) )then
+        sp1 = i
+        exit
+      end if
+    end do
+    do i = 1, size(species_types)
+      if( species2 == species_types(i) )then
+        sp2 = i
+        exit
+      end if
+    end do
 
-
+  end subroutine
 
 
 !**************************************************************************

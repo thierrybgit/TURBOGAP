@@ -40,7 +40,7 @@ module soap_turbo_desc
                       atom_sigma_r_scaling_d, atom_sigma_t_d, atom_sigma_t_scaling_d, &
                       amplitude_scaling_d, radial_enhancement, central_weight_d, central_weight, basis, scaling_mode, do_timing, &
                       do_derivatives, compress_soap, compress_soap_indices, soap, soap_cart_der, time_get_soap, &
-                      soap_d,  soap_cart_der_d, n_neigh_d, k2_i_site_d, gpu_stream)
+                      soap_d,  soap_cart_der_d, n_neigh_d, k2_i_site_d,cublas_handle , gpu_stream)
 
   implicit none
 
@@ -66,7 +66,7 @@ module soap_turbo_desc
 
 ! Output variables
   real(c_double), intent(inout), target :: soap(:,:), soap_cart_der(:,:,:)
-  type(c_ptr), intent(inout) :: gpu_stream
+  type(c_ptr), intent(inout) :: cublas_handle, gpu_stream
 !-------------------
 
 
@@ -125,15 +125,18 @@ module soap_turbo_desc
   integer(c_size_t) :: st_size_i_beg,st_size_global_scaling, st_size_i_end, st_size_angular_exp_coeff
   integer(c_size_t) :: st_size_atom_sigma_t, st_size_atom_sigma_t_scaling, st_size_species
   integer(c_size_t) :: st_size_species_multiplicity,st_size_central_weight, st_size_preflm,st_do_central_d
+  integer(c_size_t) :: size_tmp_var
   
   integer(c_int) :: bintybint, size_central_weight
-! type(c_ptr) :: W_d, S_d, species_multiplicity_d, species_d, rcut_hard_d, rcut_soft_d, atom_sigma_r_scaling_d
-  type(c_ptr) :: W_d, S_d, species_multiplicity_d, species_d
+  type(c_ptr), save :: W_d, S_d
+  logical, save :: W_S_initialized = .false.
+  type(c_ptr) :: W_d_work, S_d_work, species_multiplicity_d, species_d
 ! type(c_ptr) :: central_weight_d, atom_sigma_r_d, atom_sigma_t_d, atom_sigma_t_scaling_d, mask_d, do_central_d
   type(c_ptr) :: mask_d, do_central_d
   integer(c_int) :: size_1_species, size_2_species, size_species_multiplicity, size_i_beg, size_i_end
   integer(c_int) :: size_rcut_hard, size_atom_sigma_t, size_atom_sigma_r, size_2_W, size_2_S,size_1_W, size_1_S
   integer(c_int) :: size_atom_sigma_t_scaling, size_global_scaling, size_alphamax
+  integer(c_int) :: tmp_cint_val
 ! type(c_ptr) :: global_scaling_d, amplitude_scaling_d, alpha_max_d, nf_d
 ! type(c_ptr) :: amplitude_scaling_d, alpha_max_d
 ! type(c_ptr) :: alpha_max_d
@@ -257,34 +260,59 @@ module soap_turbo_desc
     n_max_prev = n_max
     recompute_basis = .true.
   end if
+  !W and S array are actually never deallocated in the original code! and it use weird "save" semantic to keep allocation between iteration, but never takes care to free the memory.
+  !will try to have them on the device only as they don't seem to be used on the host side now.
+
   if( recompute_basis )then
-    if( allocated(W) .or. allocated(S) )then
-      deallocate(W, S)
+    if( W_S_initialized )then
+     ! deallocate(W, S)
+      call gpu_free_async(W_d,gpu_stream)
+      call gpu_free_async(S_d,gpu_stream)
     end if
-    allocate( W(1:n_max, 1:n_max) )
-    allocate( S(1:n_max, 1:n_max) )
-    W = 0.d0
-    S = 0.d0
+!    allocate( W(1:n_max, 1:n_max) )
+!    allocate( S(1:n_max, 1:n_max) )
+!    W = 0.d0
+!    S = 0.d0
+    size_tmp_var = n_max*n_max*c_double
+    call gpu_malloc_all(W_d,size_tmp_var, gpu_stream)
+    call gpu_malloc_all(S_d,size_tmp_var, gpu_stream)
+    tmp_cint_val = 0
+!    write(0,*) tmp_cint_val
+    call gpu_memset_async(S_d,tmp_cint_val,size_tmp_var, gpu_stream)
+    call gpu_memset_async(W_d,0,size_tmp_var, gpu_stream)
+    size_tmp_var = maxval(alpha_max)*maxval(alpha_max)*c_double
+    call gpu_malloc_all(W_d_work,size_tmp_var, gpu_stream)
+    call gpu_malloc_all(S_d_work,size_tmp_var, gpu_stream)
 !   This is done per species. Each loop iteration modifies the slice of the W and S matrices that
 !   corresponds to the species in question. The radial basis functions for species A are always
 !   assumed orthogonal to the basis functions for species B. W and S are therefore block diagonal.
     do i = 1, n_species
 !     We pass these temp arrays with the right size because the Lapack/Blas routines internally fail
 !     if the memory is not contiguous
-      allocate( S_temp(1:alpha_max(i), 1:alpha_max(i)) )
-      allocate( W_temp(1:alpha_max(i), 1:alpha_max(i)) )
+!      allocate( S_temp(1:alpha_max(i), 1:alpha_max(i)) )
+!      allocate( W_temp(1:alpha_max(i), 1:alpha_max(i)) )
      
-      S_temp = 0.d0
-      W_temp = 0.d0
+!      S_temp = 0.d0
+!      W_temp = 0.d0
       if( basis == "poly3gauss" )then
-        call get_orthonormalization_matrix_poly3gauss(alpha_max(i), atom_sigma_r(i), rcut_hard(i), S_temp, W_temp)
+!        call get_orthonormalization_matrix_poly3gauss(alpha_max(i), atom_sigma_r(i), rcut_hard(i), S_temp, W_temp)
+        call get_orthonormalization_matrix_poly3gauss_gpu(alpha_max(i), atom_sigma_r(i), rcut_hard(i), S_d_work, W_d_work, cublas_handle, gpu_stream)
       else if( basis == "poly3" )then
-        call get_orthonormalization_matrix_poly3(alpha_max(i), S_temp, W_temp)
+!        call get_orthonormalization_matrix_poly3(alpha_max(i), S_temp, W_temp)
+        call get_orthonormalization_matrix_poly3_gpu(alpha_max(i), c_loc(S_temp), c_loc(W_temp), cublas_handle, gpu_stream)
       end if
-      S(i_beg(i):i_end(i), i_beg(i):i_end(i)) = S_temp
-      W(i_beg(i):i_end(i), i_beg(i):i_end(i)) = W_temp
-      deallocate( S_temp, W_temp )
+!      S(i_beg(i):i_end(i), i_beg(i):i_end(i)) = S_temp
+!      W(i_beg(i):i_end(i), i_beg(i):i_end(i)) = W_temp
+      !not sure here. -1 should be needed for the fortran to c start indexes.
+!        write(0,*) "calling copy"
+      call orthonormalization_copy_to_global_matrix(S_d_work,S_d,alpha_max(i),i_beg(i)-1,n_max,gpu_stream)
+!        write(0,*) "calling done"
+      call orthonormalization_copy_to_global_matrix(W_d_work,W_d,alpha_max(i),i_beg(i)-1,n_max,gpu_stream)
+!        write(0,*) "second calling done"
+!      deallocate( S_temp, W_temp )
     end do
+    call gpu_free_async(S_d_work,gpu_stream)
+    call gpu_free_async(W_d_work,gpu_stream)
   end if
 
   if( do_timing )then
@@ -460,11 +488,11 @@ module soap_turbo_desc
   call gpu_malloc_all(i_end_d, st_size_i_end, gpu_stream)
   call cpy_htod(c_loc(i_end),i_end_d,st_size_i_end, gpu_stream)
 
-  size_1_W=size(W,1)
-  size_2_W=size(W,2)
-  st_size_W=size_1_W*size_2_W*sizeof(W(1,1))
-  call gpu_malloc_all(W_d,st_size_W, gpu_stream)
-  call cpy_htod(c_loc(W),W_d,st_size_W, gpu_stream)
+!  size_1_W=size(W,1)
+!  size_2_W=size(W,2)
+!  st_size_W=size_1_W*size_2_W*sizeof(W(1,1))
+!  call gpu_malloc_all(W_d,st_size_W, gpu_stream)
+!  call cpy_htod(c_loc(W),W_d,st_size_W, gpu_stream)
 
 ! size_central_weight=size(central_weight,1)
 ! st_size_central_weight= size_central_weight*sizeof(central_weight(1))
@@ -600,11 +628,11 @@ module soap_turbo_desc
 ! call gpu_malloc_all(W_d,st_size_W, gpu_stream)
 ! call cpy_htod(c_loc(W),W_d,st_size_W, gpu_stream)
 
-  size_1_S=size(S,1)
-  size_2_S=size(S,2)
-  st_size_S=size_1_S*size_2_S*sizeof(S(1,1))
-  call gpu_malloc_all(S_d,st_size_S, gpu_stream)
-  call cpy_htod(c_loc(S),S_d,st_size_S, gpu_stream)
+!  size_1_S=size(S,1)
+!  size_2_S=size(S,2)
+!  st_size_S=size_1_S*size_2_S*sizeof(S(1,1))
+!  call gpu_malloc_all(S_d,st_size_S, gpu_stream)
+!  call cpy_htod(c_loc(S),S_d,st_size_S, gpu_stream)
   !  write(*,*) "RoRo ",global_scaling(:), rcut_hard(:)
   if( do_timing )then
     call cpu_time(time2)
@@ -995,8 +1023,9 @@ module soap_turbo_desc
   call gpu_free_async(species_d,gpu_stream)
   call gpu_free_async(species_multiplicity_d,gpu_stream)
 ! call gpu_free_async(rcut_hard_d,gpu_stream)
-  call gpu_free_async(W_d,gpu_stream)
-  call gpu_free_async(S_d,gpu_stream)
+!!!!!!!!ATTENTION: as the code is now, W_d and S_d are never free'd, only in realloc case they are freed and reallocate'd issue is due to the "save" value of W and S arrays that are needed across different calls of the same function. maybe this can be fixed when reworking the memory
+  !call gpu_free_async(W_d,gpu_stream)
+  !call gpu_free_async(S_d,gpu_stream)
   !call gpu_free_async(k2_i_site_d,gpu_stream)
   call gpu_free_async(preflm_d,gpu_stream)
   call gpu_free_async(i_beg_d,gpu_stream)

@@ -255,7 +255,7 @@ module gap_interface
                     atom_sigma_r_d, atom_sigma_r, atom_sigma_r_scaling_d, atom_sigma_t_d, atom_sigma_t_scaling_d, &
                     amplitude_scaling_d, radial_enhancement, central_weight_d, central_weight, basis, scaling_mode, do_timing, &
                     do_derivatives, compress_soap, compress_soap_indices, soap, soap_cart_der, time_get_soap, &
-                    soap_d,  soap_cart_der_d, n_neigh_d, k2_i_site_d, gpu_stream)
+                    soap_d,  soap_cart_der_d, n_neigh_d, k2_i_site_d, cublas_handle, gpu_stream)
 !      call cpu_time(ttt(2))
     end if
    ! write(*,*) "n_total_sites", n_total_sites, "n_sites", n_sites, "nsites0", n_sites0

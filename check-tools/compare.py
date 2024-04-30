@@ -68,7 +68,10 @@ print("Comparison for energy\n diff\t\tkeys\t\tref\t\t\trun")
 print("====================================================================\n")
 for i in range(len(data_e["keys"])):
     x1,x2=data_e["ref"][i],data_e["run"][i]
-    print(" ",abs(x1-x2),'\t',data_e["keys"][i],'\t',x1,'\t',x2)
+    if (x1!=0) :
+        print(" ",abs(x1-x2)/abs(x1),'\t',data_e["keys"][i],'\t',x1,'\t',x2)
+    else:
+        print(" ",abs(x1-x2),'\t',data_e["keys"][i],'\t',x1,'\t',x2)
 
 print("====================================================================\n")
 print("Time comparison\n \tkeys\t\tref\trun\tgain ")

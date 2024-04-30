@@ -143,6 +143,15 @@ program turbogap
   type(c_ptr) :: nf_d, rcut_hard_d, rcut_soft_d, global_scaling_d, atom_sigma_r_d, atom_sigma_r_scaling_d
   type(c_ptr) :: atom_sigma_t_d, atom_sigma_t_scaling_d, amplitude_scaling_d, alpha_max_d, central_weight_d, Qs_d
 !**************************************************************************
+!local variables for 3benergy and forces gpu
+  character(kind=c_char,len=4) :: c_name_3b
+  integer :: sp0_3b, sp1_3b, sp2_3b, max_np
+  type(c_ptr) :: energy_3b_d, forces_3b_d, virials_3b_d
+  type(c_ptr) :: kappas_array_d, sigma_d, neighbors_list_d 
+  integer(c_size_t) :: size_maxnp_bytes, size_maxnp_qs_bytes, size_alphas_bytes, size_energy3b, size_forces3b, size_virial3b
+
+!**************************************************************************
+
 
 ! integer :: n_ii,i_ii, j_jj,k_ii
 ! real*8 :: CC(1:1024,1:1024), BB(1:1024,1:1024), AA(1:1024,1:1024), dut1, dut2
@@ -1587,16 +1596,58 @@ program turbogap
         call gpu_free_async(energies_core_pot_d,gpu_stream)
         call gpu_free_async(forces_core_pot_d,gpu_stream)
         call gpu_free_async(virial_core_pot_d,gpu_stream)
+        
+
+        !3b preparations:
+        !setup a couple of parameters before calling gpu (kernel type and c_bool do_force)
+
+!       write(*,*) "allocating energy, force and virial for 3b"
+        size_energy3b = size(n_neigh)*c_double
+        call gpu_malloc_all(energy_3b_d,size_energy3b, gpu_stream)
+        call gpu_memset_async (energy_3b_d, 0, size_energy3b,gpu_stream)
+        size_forces3b = size(forces,2) * 3 * c_double
+        call gpu_malloc_all(forces_3b_d,size_forces3b, gpu_stream)
+        call gpu_memset_async (forces_3b_d, 0, size_forces3b,gpu_stream)
+        size_virial3b = 9 * c_double
+        call gpu_malloc_all(virials_3b_d,size_virial3b, gpu_stream)
+        call gpu_memset_async (virials_3b_d, 0, size_virial3b,gpu_stream)
+
+        size_maxnp_bytes = size(n_neigh)* c_int
+        call gpu_malloc_all(kappas_array_d,size_maxnp_bytes,gpu_stream)
+        call gpu_create_kappas(kappas_array_d, c_loc(n_neigh),gpu_stream, size(n_neigh))
+        
+        size_maxnp_bytes = size(neighbors_list) * c_int 
+        call gpu_malloc_all(neighbors_list_d,size_maxnp_bytes, gpu_stream)
+        call cpy_htod(c_loc(neighbors_list), neighbors_list_d, size_maxnp_bytes, gpu_stream )
+
+
+        max_np = 0
+        do i = 1, n_angle_3b
+          if (angle_3b_hypers(i)%n_sparse > max_np)then
+	  max_np = angle_3b_hypers(i)%n_sparse
+	  end if
+	end do
+
+
+!write(0,*) "max np is: ",max_np
+        size_maxnp_bytes = max_np* c_double
+        call gpu_malloc_all(cutoff_d,size_maxnp_bytes,gpu_stream)
+        call gpu_malloc_all(alphas_d,size_maxnp_bytes,gpu_stream)
+        size_maxnp_qs_bytes = 3*size_maxnp_bytes
+        call gpu_malloc_all(qs_d,size_maxnp_qs_bytes,gpu_stream)
+        size_alphas_bytes = 3 * c_double
+        call gpu_malloc_all(sigma_d,size_alphas_bytes,gpu_stream)
+
 
 !       Loop through angle_3b descriptors
         do i = 1, n_angle_3b
           !call cpu_time(time_3b(1))
           time_3b(1)=MPI_Wtime()
-          this_energies = 0.d0
-          if( params%do_forces )then
-            this_forces = 0.d0
-            this_virial = 0.d0
-          end if
+!          this_energies = 0.d0
+!          if( params%do_forces )then
+!            this_forces = 0.d0
+!            this_virial = 0.d0
+!          end if
 !          write(*,*) "Before doing 3b"
 !          !$omp parallel reduction(+: this_energies, this_forces, this_virial)
         !  !$ omp_task = omp_get_thread_num()
@@ -1620,31 +1671,54 @@ program turbogap
         !       &+1):i_end_omp(omp_task+1)), this_forces, this_virial)
 
         !  !$omp end parallel
+!          call get_3b_energy_and_forces(rjs(j_beg:j_end), xyz(1:3,j_beg:j_end), angle_3b_hypers(i)%alphas, &
+!                                        angle_3b_hypers(i)%cutoff, &
+!                                        angle_3b_hypers(i)%rcut, 0.5d0, angle_3b_hypers(i)%delta, &
+!                                        angle_3b_hypers(i)%sigma, 0.d0, angle_3b_hypers(i)%Qs, n_neigh(i_beg:i_end), &
+!                                        neighbors_list(j_beg:j_end), &
+!                                        params%do_forces, params%do_timing, angle_3b_hypers(i)%kernel_type, &
+!                                        species(i_beg:i_end), neighbor_species(j_beg:j_end), angle_3b_hypers(i)%species_center, &
+!                                        angle_3b_hypers(i)%species1, angle_3b_hypers(i)%species2, params%species_types, &
+!                                        this_energies(i_beg:i_end), this_forces, this_virial)
 
-          call get_3b_energy_and_forces(rjs(j_beg:j_end), xyz(1:3,j_beg:j_end), angle_3b_hypers(i)%alphas, &
-                                        angle_3b_hypers(i)%cutoff, &
-                                        angle_3b_hypers(i)%rcut, 0.5d0, angle_3b_hypers(i)%delta, &
-                                        angle_3b_hypers(i)%sigma, 0.d0, angle_3b_hypers(i)%Qs, n_neigh(i_beg:i_end), &
-                                        neighbors_list(j_beg:j_end), &
-                                        params%do_forces, params%do_timing, angle_3b_hypers(i)%kernel_type, &
-                                        species(i_beg:i_end), neighbor_species(j_beg:j_end), angle_3b_hypers(i)%species_center, &
-                                        angle_3b_hypers(i)%species1, angle_3b_hypers(i)%species2, params%species_types, &
-                                        this_energies(i_beg:i_end), this_forces, this_virial)
-          energies_3b = energies_3b + this_energies
-          if( params%do_forces )then
-            forces_3b = forces_3b + this_forces
-            virial_3b = virial_3b + this_virial
-          end if
+!          alphas, cutoff, sigma, qs_d are arrays that are supposed to change between calls. size changes? ofc yes :S every size is  in desc(i)%n_sparse. i could do a "empty loop" to get max value and preallocate for this.
+!except alphas, those are always 3 (according to read input function)
+! types are real8
+
+          call cpy_htod(c_loc(angle_3b_hypers(i)%cutoff),cutoff_d,size_maxnp_bytes,gpu_stream)
+          call cpy_htod(c_loc(angle_3b_hypers(i)%sigma),sigma_d,size_alphas_bytes,gpu_stream)
+          call cpy_htod(c_loc(angle_3b_hypers(i)%qs),qs_d,size_maxnp_qs_bytes,gpu_stream)
+          call cpy_htod(c_loc(angle_3b_hypers(i)%alphas),alphas_d,size_maxnp_bytes,gpu_stream)
+
+          call setup_3b_gpu(angle_3b_hypers(i)%kernel_type,angle_3b_hypers(i)%species_center,angle_3b_hypers(i)%species1, angle_3b_hypers(i)%species2,params%species_types, c_name_3b, sp0_3b, sp1_3b, sp2_3b)
+!          call gpu_3b(n_sparse, n_sites, n_atom_pairs, n_sites0, sp0_3b, sp1_3b, sp2_3b, alphas_d, delta, e0, cutoff_d, stream, rjs_d, xyz_d, n_neigh_d,species_d,neighbors_list_d,neighbor_species_d, c_do_forces, rcut, buffer, sigma_d, qs_d, c_name_3b, i_beg, i_end, energy_3b_d, forces_3b_d, virials_3b_d, kappas_array_d)
+          call gpu_3b(size(angle_3b_hypers(i)%alphas),  size(n_neigh), size(rjs), size(forces,2), sp0_3b, sp1_3b, sp2_3b, alphas_d, angle_3b_hypers(i)%delta, 0.d0, cutoff_d, gpu_stream, rjs_d, xyz_d, n_neigh_d,species_d,neighbors_list_d,neighbor_species_d, c_do_forces, angle_3b_hypers(i)%rcut, 0.5d0, sigma_d, qs_d, c_name_3b, i_beg, i_end, energy_3b_d, forces_3b_d, virials_3b_d, kappas_array_d)
+
+!         energies_3b = energies_3b + this_energies
+!         if( params%do_forces )then
+!           forces_3b = forces_3b + this_forces
+!            virial_3b = virial_3b + this_virial
+!          end if
           !call cpu_time(time_3b(2))
           time_3b(2)=MPI_Wtime()
           time_3b(3) = time_3b(3) + time_3b(2) - time_3b(1)
         end do
-
+        
+        call cpy_dtoh(energy_3b_d, c_loc(energies_3b),size_energy3b, gpu_stream)
+        call cpy_dtoh(forces_3b_d, c_loc(forces_3b),size_forces3b, gpu_stream)
+        call cpy_dtoh(virials_3b_d, c_loc(virial_3b),size_virial3b, gpu_stream)
+        call gpu_free_async(cutoff_d,gpu_stream)
+        call gpu_free_async(sigma_d,gpu_stream)
+        call gpu_free_async(qs_d,gpu_stream)
+        call gpu_free_async(alphas_d,gpu_stream)
         call gpu_free_async(species_d,gpu_stream)
         call gpu_free_async(n_neigh_d,gpu_stream)
         call gpu_free_async(neighbor_species_d,gpu_stream)
         call gpu_free_async(rjs_d,gpu_stream)
         call gpu_free_async(xyz_d,gpu_stream)
+        call gpu_free_async(energy_3b_d,gpu_stream)
+        call gpu_free_async(forces_3b_d,gpu_stream)
+        call gpu_free_async(virials_3b_d,gpu_stream)
 
 
         !call cpu_time(time2)
